@@ -216,14 +216,17 @@ app.post('/api/auth/register', async (req, res) => {
   });
 });
 
+// Updated login route with a logging statement for password verification
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email });
   
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
+  // Debugging: Print the hashed password to compare
   console.log('User Password:', user.password);  // Debugging line
-const ok = bcrypt.compareSync(password, user.password);
+  
+  const ok = bcrypt.compareSync(password, user.password);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
 
   const token = JWT.sign({ id: user._id }, process.env.JWT_SECRET || 'change_me', { expiresIn: '30d' });
@@ -233,6 +236,7 @@ const ok = bcrypt.compareSync(password, user.password);
     user: { id: user._id, name: user.name, email: user.email, balance: user.balance, referralCode: user.referralCode }
   });
 });
+
 
 // Azure admin login
 app.get('/auth/azure', passport.authenticate('azuread-openidconnect', { failureRedirect: '/' }));
@@ -390,6 +394,13 @@ app.get('/api/admin/withdrawals', adminAuth, async (req,res)=>{ const list = awa
 app.post('/api/admin/withdrawals/:id/approve', adminAuth, async (req,res)=>{ const id = req.params.id; const w = await Withdrawal.findById(id); if (!w) return res.status(404).json({ error: 'Not found' }); if (w.status !== 'pending') return res.status(400).json({ error: 'Not pending' }); const user = await User.findById(w.user); if (!user) return res.status(404).json({ error: 'User not found' }); user.balance -= Number(w.amount); await user.save(); w.status = 'approved'; w.approvedAt = Date.now(); w.adminNote = req.body.note || ''; await w.save(); res.json({ success: true, withdrawal: w }); });
 
 app.get('/api/admin/dashboard', adminAuth, async (req,res)=>{ const users = await User.countDocuments(); const deposits = await Deposit.countDocuments({ status: 'completed' }); const withdrawals = await Withdrawal.countDocuments({ status: 'pending' }); res.json({ users, deposits, pendingWithdrawals: withdrawals }); });
+// Route for logout (clear session)
+app.post('/api/logout', (req, res) => {
+  req.logout((err) => {
+    if (err) return res.status(500).json({ error: 'Logout failed' });
+    res.json({ success: true });
+  });
+});
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, ()=> console.log('Hightech backend listening on', PORT));
