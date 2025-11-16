@@ -21,25 +21,22 @@ const Withdrawal = require('./models/Withdrawal');
 const app = express();
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://highthecemp.site",
-  "https://www.highthecemp.site",
+  "https://hightechemp.site",
+  "https://www.hightechemp.site",
 ];
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // allow server-to-server or tools like Postman (no origin)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        return callback(new Error("CORS blocked for origin: " + origin));
-      }
-    },
-    credentials: true
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
+
+app.options("*", cors());
+
+ 
 app.use(bodyParser.json());
 app.use(morgan('dev'));
 app.use(cookieParser());
