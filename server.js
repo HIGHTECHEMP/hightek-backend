@@ -216,14 +216,21 @@ app.post('/api/auth/register', async (req, res) => {
   });
 });
 
-app.post('/api/auth/login', async (req,res)=>{
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email });
+  
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+
   const ok = bcrypt.compareSync(password, user.password);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
+
   const token = JWT.sign({ id: user._id }, process.env.JWT_SECRET || 'change_me', { expiresIn: '30d' });
-  res.json({ token, user: { id: user._id, name: user.name, email: user.email, balance: user.balance, referralCode: user.referralCode } });
+
+  res.json({
+    token,
+    user: { id: user._id, name: user.name, email: user.email, balance: user.balance, referralCode: user.referralCode }
+  });
 });
 
 // Azure admin login
