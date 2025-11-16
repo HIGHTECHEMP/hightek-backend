@@ -222,7 +222,8 @@ app.post('/api/auth/login', async (req, res) => {
   
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
-  const ok = bcrypt.compareSync(password, user.password);
+  console.log('User Password:', user.password);  // Debugging line
+const ok = bcrypt.compareSync(password, user.password);
   if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
 
   const token = JWT.sign({ id: user._id }, process.env.JWT_SECRET || 'change_me', { expiresIn: '30d' });
