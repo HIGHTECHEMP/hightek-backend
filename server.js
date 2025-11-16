@@ -8,9 +8,9 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const passport = require('passport');
-const { OIDCStrategy } = require('passport-azure-ad');
 const fetch = require('node-fetch');
 const { nanoid } = require('nanoid');
+const bcrypt = require('bcryptjs');
 
 const User = require('./models/User');
 const Machine = require('./models/Machine');
@@ -19,7 +19,27 @@ const Deposit = require('./models/Deposit');
 const Withdrawal = require('./models/Withdrawal');
 
 const app = express();
-app.use(cors());
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://highthecemp.site",
+  "https://www.highthecemp.site",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow server-to-server or tools like Postman (no origin)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        return callback(new Error("CORS blocked for origin: " + origin));
+      }
+    },
+    credentials: true
+  })
+);
 app.use(bodyParser.json());
 app.use(morgan('dev'));
 app.use(cookieParser());
