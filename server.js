@@ -203,32 +203,104 @@ app.post('/api/claim', authMiddleware, async (req,res)=>{
 app.get('/api/me', authMiddleware, async (req,res)=>{ const user = await User.findById(req.userId).lean(); const purchases = await Purchase.find({ user: req.userId }).populate('machine').lean(); res.json({ user, purchases }); });
 
 // Deposit - Flutterwave integration (creates payment link)
-app.post('/api/deposit/create', authMiddleware, async (req,res)=>{
+// FLUTTERWAVE INLINE DEPOSIT (Improved)
+app.post('/api/deposit/create', authMiddleware, async (req, res) => {
   const { amount } = req.body;
-  if (!amount || amount < 5000) return res.status(400).json({ error: 'Minimum deposit is 5000' });
+  if (!amount || amount < 5000)
+    return res.status(400).json({ error: 'Minimum deposit is 5000' });
+
   const tx_ref = 'HT-' + nanoid(10);
-  const payload = { tx_ref, amount: amount.toString(), currency: "NGN", redirect_url: `${process.env.BASE_URL || 'http://localhost:4000'}/api/deposit/callback`, customer: { email: (await User.findById(req.userId)).email, name: 'Hightech User' }, customizations: { title: "Hightech Deposit", description: "Account deposit" } };
-  if (!process.env.FLW_SECRET_KEY){
-    const fakeLink = `${process.env.BASE_URL || 'http://localhost:4000'}/simulate-pay?tx_ref=${tx_ref}&amount=${amount}`;
-    const d = new Deposit({ user: req.userId, amount, tx_ref, status: 'pending' }); await d.save();
-    return res.json({ payment_link: fakeLink, tx_ref });
-  }
+
+  const d = new Deposit({
+    user: req.userId,
+    amount,
+    tx_ref,
+    status: 'pending'
+  });
+  await d.save();
+
+  res.json({ tx_ref });
+});
+
+// VERIFY INLINE PAYMENT
+app.post('/api/deposit/verify', authMiddleware, async (req, res) => {
   try {
-    const resp = await fetch('https://api.flutterwave.com/v3/payments', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` }, body: JSON.stringify(payload) });
-    const data = await resp.json();
-    if (data.status === 'success' && data.data && data.data.link){ const d = new Deposit({ user: req.userId, amount, tx_ref, status: 'pending' }); await d.save(); return res.json({ payment_link: data.data.link, tx_ref }); } else { return res.status(500).json({ error: 'Failed to create payment', details: data }); }
-  } catch(e){ console.error(e); return res.status(500).json({ error: 'Payment link creation failed', details: e.message }); }
-});
+    const { tx_ref } = req.body;
 
-app.post('/api/deposit/callback', async (req,res)=>{
-  const payload = req.body || req.query || {}; const tx_ref = payload.tx_ref || req.query.tx_ref; const status = payload.status || 'successful'; const amount = Number(payload.amount || req.query.amount || 0);
-  if (!tx_ref) return res.status(400).json({ error: 'Missing tx_ref' });
-  const deposit = await Deposit.findOne({ tx_ref });
-  if (!deposit){ const d = new Deposit({ user: null, amount, tx_ref, status }); await d.save(); return res.json({ success: true }); }
-  if (status === 'successful' || status === 'completed'){ deposit.status = 'completed'; deposit.completedAt = Date.now(); await deposit.save(); if (deposit.user){ const user = await User.findById(deposit.user); user.balance = (user.balance || 0) + Number(deposit.amount); await user.save(); if (user.referredBy){ const ref = await User.findById(user.referredBy); if (ref){ const bonus = Number(deposit.amount) * 0.10; ref.balance = (ref.balance || 0) + bonus; await ref.save(); const refDep = new Deposit({ user: ref._id, amount: bonus, tx_ref: 'ref-' + tx_ref, status: 'completed', type: 'referral', note: `10% of ${user._id}` }); await refDep.save(); } } } return res.json({ success: true }); } else { deposit.status = status; await deposit.save(); return res.json({ success: true }); }
-});
+    if (!tx_ref)
+      return res.status(400).json({ error: 'tx_ref missing' });
 
-app.get('/simulate-pay', (req,res)=>{ const { tx_ref, amount } = req.query; res.send(`<html><body><h3>Simulated payment</h3><p>tx_ref: ${tx_ref} amount: ${amount}</p><form method="POST" action="/api/deposit/callback"><input type="hidden" name="tx_ref" value="${tx_ref}"/><input type="hidden" name="status" value="successful"/><input type="hidden" name="amount" value="${amount}"/><button type="submit">Simulate successful payment (POST webhook)</button></form><p>Or GET <a href="/api/deposit/callback?tx_ref=${tx_ref}&status=successful&amount=${amount}">callback link</a></p></body></html>`); });
+    // Find deposit
+    const deposit = await Deposit.findOne({ tx_ref });
+    if (!deposit)
+      return res.status(404).json({ error: 'Deposit not found' });
+
+    if (deposit.status === 'completed')
+      return res.json({ success: true, message: 'Already credited' });
+
+    // Verify payment using Flutterwave API
+    const verifyUrl = `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`;
+
+    const response = await fetch(verifyUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const data = await response.json();
+
+    if (!data || data.status !== 'success')
+      return res.status(400).json({ error: 'Payment not verified', details: data });
+
+    const flw_status = data.data.status;
+    const paid_amount = Number(data.data.amount);
+
+    if (flw_status !== 'successful')
+      return res.status(400).json({ error: 'Payment not successful yet' });
+
+    // Update deposit
+    deposit.status = 'completed';
+    deposit.completedAt = Date.now();
+    deposit.amount = paid_amount;
+    await deposit.save();
+
+    // Credit user
+    const user = await User.findById(deposit.user);
+    user.balance = (user.balance || 0) + paid_amount;
+    await user.save();
+
+    // Referral bonus (10%)
+    if (user.referredBy) {
+      const refUser = await User.findById(user.referredBy);
+      if (refUser) {
+        const bonus = paid_amount * 0.1;
+        refUser.balance += bonus;
+        await refUser.save();
+
+        // Save bonus as separate deposit entry
+        await Deposit.create({
+          user: refUser._id,
+          amount: bonus,
+          tx_ref: "ref-" + tx_ref,
+          status: "completed",
+          type: "referral",
+          note: `10% bonus from ${user._id}`
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      credited: paid_amount
+    });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Server error', details: e.message });
+  }
+});
 
 app.post('/api/withdraw/request', authMiddleware, async (req,res)=>{
   const { amount, bank, accountNumber, accountName } = req.body;
