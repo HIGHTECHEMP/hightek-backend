@@ -141,16 +141,62 @@ app.post('/api/admin/login', async (req, res) => {
 
 
 // Auth
-app.post('/api/auth/register', async (req,res)=>{
+app.post('/api/auth/register', async (req, res) => {
   const { name, email, password, referralCode } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Missing email or password' });
+
+  if (!email || !password)
+    return res.status(400).json({ error: 'Missing email or password' });
+
   const exists = await User.findOne({ email });
-  if (exists) return res.status(400).json({ error: 'Email already exists' });
+  if (exists)
+    return res.status(400).json({ error: 'Email already exists' });
+
+  // hash password
   const hashed = bcrypt.hashSync(password, 8);
-  const user = new User({ name, email, password: hashed, balance: 0, referralCode: nanoid(6), referredBy: referralCode || null });
+
+  // --- REFERRAL LOGIC FIX ---
+  let referredBy = null;
+
+  if (referralCode && referralCode.trim() !== '') {
+    const refUser = await User.findOne({ referralCode });
+
+    if (refUser) {
+      referredBy = refUser._id;
+
+      // OPTIONAL: reward the referrer
+      refUser.balance += 100; // example reward
+      await refUser.save();
+    }
+  }
+
+  // create new user
+  const user = new User({
+    name,
+    email,
+    password: hashed,
+    balance: 0,
+    referralCode: nanoid(6),
+    referredBy
+  });
+
   await user.save();
-  const token = JWT.sign({ id: user._id }, process.env.JWT_SECRET || 'change_me', { expiresIn: '30d' });
-  res.json({ token, user: { id: user._id, name: user.name, email: user.email, balance: user.balance, referralCode: user.referralCode } });
+
+  const token = JWT.sign(
+    { id: user._id },
+    process.env.JWT_SECRET || 'change_me',
+    { expiresIn: '30d' }
+  );
+
+  res.json({
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      balance: user.balance,
+      referralCode: user.referralCode
+    }
+  });
 });
 
 app.post('/api/auth/login', async (req,res)=>{
